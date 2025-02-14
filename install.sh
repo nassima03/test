@@ -21,7 +21,7 @@ parted --script $DISK mkpart primary 1GiB 100%
 echo -n "azerty123" | cryptsetup luksFormat --type luks2 ${DISK}3 -
 echo -n "azerty123" | cryptsetup open ${DISK}3 cryptroot
 
-# LVM
+# LVM Configuration
 pvcreate /dev/mapper/cryptroot
 vgcreate vg0 /dev/mapper/cryptroot
 lvcreate -L 30G -n root vg0
@@ -30,7 +30,7 @@ lvcreate -L 10G -n encrypted vg0
 lvcreate -L 5G -n shared vg0
 lvcreate -l 100%FREE -n home vg0
 
-# Formatage
+# Formatage des partitions
 mkfs.fat -F32 ${DISK}1
 mkfs.ext4 ${DISK}2
 mkfs.ext4 /dev/vg0/root
@@ -45,7 +45,7 @@ echo -n "azerty123" | cryptsetup open /dev/vg0/encrypted encrypted_volume
 mkfs.ext4 /dev/mapper/encrypted_volume
 cryptsetup close encrypted_volume
 
-# Montage
+# Montage des partitions
 mount /dev/vg0/root /mnt
 mkdir -p /mnt/boot
 mount ${DISK}2 /mnt/boot
@@ -56,65 +56,64 @@ mount /dev/vg0/home /mnt/home
 mkdir -p /mnt/shared
 mount /dev/vg0/shared /mnt/shared
 
-# Installation base
-pacstrap /mnt base linux linux-firmware lvm2 vim networkmanager
+# Installation des paquets de base
+pacstrap /mnt base linux linux-firmware lvm2 vim networkmanager grub efibootmgr
 
-# Fstab
+# Génération du fichier fstab
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# Configuration système
+# Configuration système après chroot
 arch-chroot /mnt /bin/bash <<EOF
-# Région
+# Configuration de l'heure
 ln -sf /usr/share/zoneinfo/Europe/Paris /etc/localtime
 hwclock --systohc
 
-# Langue
-echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+# Configuration de la langue
+echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 locale-gen
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
 
-# Réseau
+# Configuration du réseau
 echo "archbox" > /etc/hostname
-echo "127.0.0.1 localhost" >> /etc/hosts
+echo "127.0.0.1 localhost" > /etc/hosts
 echo "::1       localhost" >> /etc/hosts
 echo "127.0.1.1 archbox.localdomain archbox" >> /etc/hosts
 systemctl enable NetworkManager
 
-# Utilisateurs
+# Création des utilisateurs
 echo "root:azerty123" | chpasswd
 useradd -m -G wheel colleague
 echo "colleague:azerty123" | chpasswd
 useradd -m son
 echo "son:azerty123" | chpasswd
 
-# Sudo
+# Installation de sudo
 pacman -S sudo --noconfirm
 echo '%wheel ALL=(ALL) ALL' >> /etc/sudoers
 
-# Paquets supplémentaires
+# Installation de paquets supplémentaires
 pacman -Syu --noconfirm
 pacman -S virtualbox virtualbox-host-dkms linux-headers firefox gcc make htop neofetch git base-devel xorg-server xorg-xinit hyprland wayland xorg-xwayland alacritty --noconfirm
 
-# Dossier partagé
+# Configuration du dossier partagé
 groupadd shared
 usermod -aG shared colleague
 usermod -aG shared son
+mkdir -p /shared
 chown :shared /shared
 chmod 770 /shared
 
-# GRUB
-pacman -S grub efibootmgr --noconfirm
+# Installation et configuration de GRUB
 echo "GRUB_CMDLINE_LINUX=\\"cryptdevice=${DISK}3:cryptroot root=/dev/mapper/vg0-root\\"" >> /etc/default/grub
 grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=GRUB
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# Initramfs
+# Configuration de l'initramfs
 sed -i 's/^HOOKS=(.*)/HOOKS=(base udev autodetect keyboard keymap modconf block encrypt lvm2 filesystems fsck)/' /etc/mkinitcpio.conf
 mkinitcpio -P
-
 EOF
 
-# Nettoyage
+# Démontage des partitions et fin de l'installation
 umount -R /mnt
 swapoff -a
 
