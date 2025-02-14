@@ -11,6 +11,12 @@ DISK="/dev/sda"
 PASSWORD="azerty123"
 HOSTNAME="arch-vm"
 
+# ✅ Vérification que le système est bien en mode UEFI
+if [ ! -d "/sys/firmware/efi" ]; then
+    echo "Erreur : Le système n'est pas en mode UEFI. Change les paramètres BIOS."
+    exit 1
+fi
+
 # ✅ Partitionnement du disque
 parted --script $DISK mklabel gpt
 parted --script $DISK mkpart primary fat32 1MiB 513MiB
@@ -18,12 +24,15 @@ parted --script $DISK set 1 esp on
 parted --script $DISK mkpart primary ext4 513MiB 1GiB
 parted --script $DISK mkpart primary 1GiB 100%
 
+# ✅ Formater les partitions EFI et BOOT
+mkfs.fat -F32 ${DISK}1
+mkfs.ext4 ${DISK}2
+
 # ✅ Chiffrement de la partition principale
 echo -n "$PASSWORD" | cryptsetup luksFormat --type luks2 ${DISK}3 -
 echo -n "$PASSWORD" | cryptsetup open ${DISK}3 cryptlvm
 
 # 📌 Vérification : Est-ce que cryptlvm est bien ouvert ?
-ls /dev/mapper/
 if [ ! -e "/dev/mapper/cryptlvm" ]; then
     echo "Erreur : Le chiffrement LUKS a échoué."
     exit 1
@@ -34,14 +43,14 @@ pvcreate /dev/mapper/cryptlvm
 vgcreate vg0 /dev/mapper/cryptlvm
 lvcreate -L 30G -n root vg0
 lvcreate -L 8G -n swap vg0
-lvcreate -L 10G -n encrypted vg0
+lvcreate -L 10G -n home vg0
 lvcreate -L 5G -n shared vg0
 lvcreate -L 10G -n vbox vg0
-lvcreate -l 100%FREE -n home vg0
 
-# ✅ Formatage des partitions
-mkfs.fat -F32 ${DISK}1
-mkfs.ext4 ${DISK}2
+# 📌 Activation de LVM
+vgchange -ay
+
+# ✅ Formatage des volumes logiques
 mkfs.ext4 /dev/vg0/root
 mkfs.ext4 /dev/vg0/home
 mkfs.ext4 /dev/vg0/shared
@@ -71,7 +80,7 @@ pacstrap /mnt base linux linux-firmware lvm2 vim networkmanager
 # ✅ Génération du fichier fstab
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# ✅ Configuration du système
+# ✅ Configuration du système (arch-chroot)
 arch-chroot /mnt /bin/bash <<EOF
 
 # ✅ Configuration du fuseau horaire et horloge
@@ -117,7 +126,7 @@ chown -R papa:papa /home/papa/.config
 # ✅ Installation de GRUB et génération du fichier de configuration
 pacman -S grub efibootmgr --noconfirm
 echo "GRUB_CMDLINE_LINUX=\"cryptdevice=${DISK}3:cryptlvm root=/dev/mapper/vg0-root\"" >> /etc/default/grub
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --recheck
 grub-mkconfig -o /boot/grub/grub.cfg
 
 # ✅ Correction de initramfs
@@ -130,7 +139,8 @@ EOF
 lsblk -f > /mnt/install_check.txt
 cat /mnt/etc/fstab >> /mnt/install_check.txt
 
-# ✅ Nettoyage et démontage
+# ✅ Nettoyage et démontage propre
+exit
 umount -R /mnt
 swapoff -a
 cryptsetup close cryptlvm
